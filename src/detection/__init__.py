@@ -1,0 +1,1 @@
+"""Detection module for animal detection and spatial analysis."""

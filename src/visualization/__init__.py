@@ -1,0 +1,1 @@
+"""Visualization and analysis components for PCA and patch representations."""

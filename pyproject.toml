@@ -1,0 +1,65 @@
+[project]
+name = "viewpoints"
+version = "0.1.0"
+description = "Wildlife viewpoint analysis using DINOv2 and PCA"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.7.0",
+    "torchvision>=0.18.0",
+    "torchaudio>=2.4.0",
+    "xformers>=0.0.31",
+    "transformers>=4.20.0",
+    "scikit-learn>=1.0.0",
+    "matplotlib>=3.5.0",
+    "pillow>=9.0.0",
+    "numpy>=1.20.0",
+    "pyyaml>=6.0.0",
+    "tqdm>=4.60.0",
+    "gradio",
+    "scikit-image"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=22.0.0",
+    "ruff>=0.1.0",
+]
+interactive = [
+    "ipywidgets>=8.0.0",
+    "ipympl>=0.9.0",
+    "jupyter>=1.0.0",
+    "gradio>=4.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.uv]
+index-strategy = "unsafe-best-match"
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch" }
+torchvision = { index = "pytorch" }
+torchaudio = { index = "pytorch" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]

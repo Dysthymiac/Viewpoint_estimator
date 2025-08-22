@@ -1,0 +1,121 @@
+# Viewpoints Analysis Configuration
+
+# Dataset paths
+dataset:
+  root_path: "path/to/the/dataset"
+  annotations_file: "annotations.xml"
+  images_dir: "images"
+  crop_to_bbox: false  # Set to false for whole image analysis, true for cropped animals
+
+# Model configuration
+model:
+  dinov2_model: "dinov2_vitl14_ld"  # Options: dinov2_vits14, dinov2_vitb14, dinov2_vitl14, dinov2_vitg14, dinov2_vitl14_ld
+  device: "cuda"
+  batch_size: 8
+  image_size: 518  # DINOv2 default for vitl14
+  patch_size: 14
+  enable_depth: true  # Enable depth estimation head
+  depth_dataset: "nyu"  # Dataset for depth head: 'nyu' or 'kitti'
+
+# Feature extraction
+features:
+  output_dir: "outputs/features_small"
+  chunks_dir: "feature_chunks"
+  chunk_file_pattern: "chunk_{:03d}.npz"
+
+# Analysis method configuration
+analysis:
+  # Choose analysis method: 'pca', 'kmeans', 'gmm', 'birch', or pipeline
+  # method: "pca"  # Single method
+  # method_config: "pca_kmeans"  # Or use predefined config
+  method: "kmeans"
+  
+  # Method-specific parameters
+  params:
+    # n_components: 100  # For PCA or GMM
+    n_clusters: 30   # For K-Means or BIRCH
+  
+  # Pipeline configuration (alternative to single method)
+  # pipeline:
+  #   - name: "pca"
+  #     params:
+  #       n_components: 50
+  #   - name: "kmeans" 
+  #     params:
+  #       n_clusters: 10
+  
+  # Output configuration
+  output_dir: "outputs_anteater/analysis"
+  model_filename: kmeans30.npz"
+  save_model: true
+
+# Visualization
+visualization:
+  output_dir: "outputs/plots"
+  n_sample_images: 12
+  figsize: [16, 12]
+  dpi: 300
+  colormap: "RGB"  # Use RGB for 3 PCA components
+
+# Detection and Classification Configuration
+detection:
+  # Animal detection parameters
+  animal_detection:
+    min_animal_area_ratio: 0.01      # Minimum area ratio for valid detections
+    morphological_cleanup: true       # Enable morphological processing
+    kernel_size: 1                   # Morphological kernel size
+    kernel_shape: "disk"             # Kernel shape: "disk", "rectangle", "square"
+    operations: ["opening", "closing"] # Morphological operations
+    iou_threshold: 0.5               # IoU threshold for detection evaluation
+    
+  # Background labels (will be excluded from animal detection)
+  background_labels: ["background", "vegetation", "ground", "shadow"]
+  
+  # Spatial feature extraction
+  spatial_features:
+    bodypart_labels: ["head", "body", "legs", "tail", "snout", "ears", "neck"]
+    min_region_size: 1               # Minimum region size for body parts
+    
+
+# Morphological processing (advanced)
+morphological:
+  # Parameter combinations for tuning
+  parameter_combinations:
+    - kernel_size: 1
+      operations: ["opening"]
+      min_area: 0.005
+    - kernel_size: 1  
+      operations: ["opening", "closing"]
+      min_area: 0.01
+    - kernel_size: 1
+      operations: ["closing", "opening"] 
+      min_area: 0.01
+      
+  # Uncertainty-based weighting
+  uncertainty_weighting: false        # Enable uncertainty-based cleanup
+  
+# Cluster labeling (for interactive annotation)
+cluster_labeling:
+  labels_file: "cluster_labels.json"  # File to save/load cluster labels
+  semantic_labels: 
+    - "background"
+    - "head" 
+    - "body"
+    - "legs"
+    - "tail"
+    - "snout"
+    - "neck"
+    - "belly"
+    - "back"
+    - "ears"
+    - "fur_pattern"
+    - "shadow"
+    - "vegetation"
+    - "ground"
+    - "other"
+
+# Logging
+logging:
+  level: "INFO"
+  log_dir: "logs"
+  log_file: "viewpoints_analysis.log"
