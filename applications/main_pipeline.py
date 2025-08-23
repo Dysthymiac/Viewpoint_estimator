@@ -116,8 +116,8 @@ def process_features_chunked(loader: CVATLoader, extractor: DINOv2PatchExtractor
     total_chunks = (len(loader) + chunk_size - 1) // chunk_size
     
     for chunk_idx in range(total_chunks):
-        if chunk_idx > 30:
-            break  # Limit to first 30 chunks for testing
+        # if chunk_idx > 30:
+        #     break  # Limit to first 30 chunks for testing
         chunk_file = chunks_dir / config['features']['chunk_file_pattern'].format(chunk_idx)
         
         # Check if chunk already exists
