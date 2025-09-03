@@ -7,20 +7,21 @@ import math
 
 import numpy as np
 from scipy.ndimage import binary_fill_holes, label
-from skimage.morphology import remove_small_objects, binary_opening, binary_closing, disk, square
+from skimage.morphology import remove_small_objects, binary_opening, binary_closing, disk, footprint_rectangle
 
 def apply_morphology(
     mask: np.ndarray,
     operations: List[str] = ["opening", "closing"],
+    # operations: List[str] = ["closing", "opening"],
     kernel_size: int = 1,
-    kernel_shape: str = "disk"
+    kernel_shape: str = "square",
+    pad: bool = True
 ) -> np.ndarray:
     """
-    Apply morphological cleanup specifically for animal detection.
+    Apply morphological cleanup to mask. Padding should be handled by caller.
     
     Args:
-        animal_mask: 2D binary mask of potential animal regions
-        min_area_threshold: Minimum area as fraction of total image
+        mask: 2D binary mask (already padded if boundary preservation needed)
         operations: List of morphological operations to apply
         kernel_size: Size of morphological kernel
         kernel_shape: Shape of kernel ("disk", "rectangle", "square")
@@ -34,17 +35,21 @@ def apply_morphology(
     if kernel_shape == "disk":
         kernel = disk(kernel_size)
     elif kernel_shape == "square":
-        kernel = square(kernel_size)
+        kernel = footprint_rectangle((kernel_size, kernel_size))
     else:
         kernel = disk(kernel_size)  # Default fallback
     
+    if pad:
+        clean_mask = np.pad(clean_mask, kernel_size, "edge")
+
     # Apply morphological operations
     for operation in operations:
         if operation == "opening":
             clean_mask = binary_opening(clean_mask, kernel)
         elif operation == "closing":
             clean_mask = binary_closing(clean_mask, kernel)
-            
+    if pad:
+        clean_mask = clean_mask[kernel_size:-kernel_size, kernel_size:-kernel_size]
     return clean_mask.astype(mask.dtype)
 
 def create_mask_from_patches(

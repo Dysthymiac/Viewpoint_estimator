@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import math
 from typing import Tuple, Optional
+import urllib.request
+from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
 from torchvision import transforms
@@ -153,22 +156,104 @@ def convert_to_relative_coordinates(
     return relative_coords, relative_patch_size
 
 
+class BNHead(nn.Module):
+    """Batch Normalization Head for segmentation, based on DINOv2's BNHead."""
+    
+    def __init__(self, in_channels: int, num_classes: int, input_transform: str = "resize_concat"):
+        super().__init__()
+        self.input_transform = input_transform
+        self.in_channels = in_channels
+        self.bn = nn.BatchNorm2d(in_channels)
+        self.conv_seg = nn.Conv2d(in_channels, num_classes, kernel_size=1)
+        
+    def _transform_inputs(self, inputs):
+        """Transform inputs according to input_transform setting."""
+        if self.input_transform == "resize_concat":
+            if isinstance(inputs, (list, tuple)) and len(inputs) > 1:
+                # Extract feature tensors from (tensor, class_token) tuples
+                feature_tensors = [inp[0] for inp in inputs]
+                
+                # Get target size from first tensor (should be the largest)
+                target_size = feature_tensors[0].shape[-2:]
+                
+                # Resize all tensors to target size and concatenate
+                resized_inputs = []
+                for tensor in feature_tensors:
+                    if tensor.shape[-2:] != target_size:
+                        resized = F.interpolate(tensor, size=target_size, mode='bilinear', align_corners=False)
+                        resized_inputs.append(resized)
+                    else:
+                        resized_inputs.append(tensor)
+                
+                # Concatenate along channel dimension
+                return torch.cat(resized_inputs, dim=1)
+            else:
+                # Single input - extract tensor from (tensor, class_token) tuple
+                inp = inputs[0] if isinstance(inputs, (list, tuple)) else inputs
+                if isinstance(inp, (list, tuple)):
+                    return inp[0]  # Extract tensor from (tensor, class_token)
+                else:
+                    return inp
+        elif self.input_transform == "single_layer":
+            # Linear head - use only the last feature level (highest resolution)
+            if isinstance(inputs, (list, tuple)):
+                last_feature = inputs[-1]  # Take last feature level
+                if isinstance(last_feature, (list, tuple)):
+                    return last_feature[0]  # Extract tensor from (tensor, class_token)
+                else:
+                    return last_feature
+            else:
+                return inputs
+        else:
+            # For other transform types, just take first tensor
+            inp = inputs[0] if isinstance(inputs, (list, tuple)) else inputs
+            if isinstance(inp, (list, tuple)):
+                return inp[0]  # Extract tensor from (tensor, class_token)
+            else:
+                return inp
+        
+    def forward(self, x):
+        """Forward pass through BN head."""
+        # Transform inputs (handle multiple feature levels)
+        x = self._transform_inputs(x)
+        
+        # Apply batch norm
+        x = self.bn(x)
+        
+        # Apply final conv for classification
+        x = self.conv_seg(x)
+        
+        return x
+
+
 class DINOv2PatchExtractor:
     """DINOv2 patch feature extractor with smart resize."""
     
     def __init__(self, model_name: str = "dinov2_vitl14_ld", device: str = "cuda", image_size: int = 518, 
-                 enable_depth: bool = False, depth_dataset: str = "nyu"):
+                 enable_depth: bool = False, depth_dataset: str = "nyu", 
+                 enable_segmentation: bool = False, segmentation_dataset: str = "ade20k", 
+                 segmentation_head_type: str = "linear"):
         self.model_name = model_name
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.image_size = image_size
         self.patch_size = 14  # DINOv2 standard patch size
         self.enable_depth = enable_depth
         self.depth_dataset = depth_dataset
+        self.enable_segmentation = enable_segmentation
+        self.segmentation_dataset = segmentation_dataset
+        self.segmentation_head_type = segmentation_head_type
         
         # Load model with built-in depth head
         self.model = torch.hub.load('facebookresearch/dinov2', model_name)
         self.model.to(self.device)
         self.model.eval()
+        
+        # Load segmentation head if enabled
+        self.segmentation_head = None
+        if self.enable_segmentation:
+            self.segmentation_head = self._load_segmentation_head()
+            self.segmentation_head.to(self.device)
+            self.segmentation_head.eval()
         
         # Image preprocessing
         self.transform = transforms.Compose([
@@ -182,36 +267,88 @@ class DINOv2PatchExtractor:
         # Calculate relative patch size in original image space
         self.relative_patch_size = 1.0 / self.patches_per_dim
     
+    def _load_segmentation_head(self) -> BNHead:
+        """Load segmentation head weights and create BNHead."""
+        # Map model names to backbone names for URL construction
+        backbone_map = {
+            "dinov2_vits14": "vits14", "dinov2_vits14_ld": "vits14",
+            "dinov2_vitb14": "vitb14", "dinov2_vitb14_ld": "vitb14", 
+            "dinov2_vitl14": "vitl14", "dinov2_vitl14_ld": "vitl14",
+            "dinov2_vitg14": "vitg14", "dinov2_vitg14_ld": "vitg14"
+        }
+        
+        backbone_name = backbone_map.get(self.model_name, "vitb14")
+        head_type = "linear" if self.segmentation_head_type == "linear" else "ms"
+        
+        # Construct download URL
+        url = f"https://dl.fbaipublicfiles.com/dinov2/dinov2_{backbone_name}/dinov2_{backbone_name}_{self.segmentation_dataset}_{head_type}_head.pth"
+        
+        # Setup cache directory
+        cache_dir = Path.home() / ".cache" / "dinov2_segmentation"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        local_path = cache_dir / f"dinov2_{backbone_name}_{self.segmentation_dataset}_{head_type}_head.pth"
+        
+        # Download if not exists
+        if not local_path.exists():
+            print(f"Downloading segmentation head: {url}")
+            urllib.request.urlretrieve(url, local_path)
+            
+        # Load checkpoint
+        checkpoint = torch.load(local_path, map_location='cpu')
+        state_dict = checkpoint.get('state_dict', checkpoint)
+        
+        # Determine input channels and num classes from weights
+        # Look for decode_head.conv_seg.weight to get dimensions
+        conv_seg_weight = None
+        bn_weight = None
+        
+        for key, tensor in state_dict.items():
+            if 'decode_head.conv_seg.weight' in key:
+                conv_seg_weight = tensor
+            elif 'decode_head.bn.weight' in key:
+                bn_weight = tensor
+                
+        if conv_seg_weight is None:
+            raise ValueError("Could not find conv_seg weights in checkpoint")
+            
+        num_classes = conv_seg_weight.shape[0]
+        in_channels = bn_weight.shape[0]  # BN weight shows the actual concatenated input channels
+        
+        print(f"Creating segmentation head: {in_channels} -> {num_classes} classes")
+        
+        # Determine input transform type based on head type
+        input_transform = "resize_concat" if head_type == "ms" else "single_layer"
+        
+        # Create BNHead
+        segmentation_head = BNHead(in_channels=in_channels, num_classes=num_classes, input_transform=input_transform)
+        
+        # Load weights - need to map from state_dict keys to our model
+        head_state_dict = {}
+        for key, value in state_dict.items():
+            if 'decode_head.bn' in key:
+                new_key = key.replace('decode_head.', '')
+                head_state_dict[new_key] = value
+            elif 'decode_head.conv_seg' in key:
+                new_key = key.replace('decode_head.', '')
+                head_state_dict[new_key] = value
+                
+        segmentation_head.load_state_dict(head_state_dict)
+        return segmentation_head
     
-    def extract_patch_features(self, image: Image.Image) -> tuple[np.ndarray, np.ndarray, float]:
+    def extract_patch_features(self, image: Image.Image) -> tuple[np.ndarray, np.ndarray, float, Optional[np.ndarray], Optional[np.ndarray]]:
         """
-        Extract patch features from image with smart resize.
+        Extract patch features with optional depth and segmentation from image with smart resize.
         
         Args:
             image: PIL Image
             
         Returns:
-            Tuple of (patch_features, patch_coordinates, relative_patch_size)
+            Tuple of (patch_features, patch_coordinates, relative_patch_size, depth_output, segmentation_output)
             - patch_features: (n_valid_patches, feature_dim)
             - patch_coordinates: (n_valid_patches, 2) with relative (row, col) positions in [0,1]
             - relative_patch_size: Float representing patch size relative to image dimensions
-        """
-        features, coords, patch_size, _ = self.extract_patch_features_with_depth(image)
-        return features, coords, patch_size
-
-    def extract_patch_features_with_depth(self, image: Image.Image) -> tuple[np.ndarray, np.ndarray, float, Optional[np.ndarray]]:
-        """
-        Extract patch features and depth from image with smart resize.
-        
-        Args:
-            image: PIL Image
-            
-        Returns:
-            Tuple of (patch_features, patch_coordinates, relative_patch_size, patch_depths)
-            - patch_features: (n_valid_patches, feature_dim)
-            - patch_coordinates: (n_valid_patches, 2) with relative (row, col) positions in [0,1]
-            - relative_patch_size: Float representing patch size relative to image dimensions
-            - patch_depths: (n_valid_patches,) depth values or None if depth disabled
+            - depth_output: (height, width) depth map or None if depth disabled
+            - segmentation_output: (height, width) segmentation map or None if segmentation disabled
         """
         # Smart resize with padding
         resized_image, padding_info = smart_resize_with_padding(image, self.image_size)
@@ -221,36 +358,38 @@ class DINOv2PatchExtractor:
         
         # Extract features based on model type, optionally extract depth
         with torch.no_grad():
-            if '_ld' in self.model_name:
+            if '_ld' in self.model_name or '_dd' in self.model_name:
                 # DepthEncoderDecoder model - extract features from backbone
-                # raw_backbone_features = self.model.backbone.forward_features(None)
-                raw_backbone_features = self.model.backbone(image_tensor)
+                # res = self.model.whole_inference(image_tensor, img_meta=None, rescale=False)
+                if "_dd" in self.model_name:
+                    raw_backbone_features = self.model.extract_feat(image_tensor)
+                else:
+                    raw_backbone_features = self.model.backbone(image_tensor)
+                
                 x = raw_backbone_features[-1][0]  # Shape: (1, n_patches, feature_dim)
+                # print("X", x.shape)
                 patch_features = self.model.backbone.norm(x.permute(0, 2, 3, 1).reshape(-1, x.shape[1]))
-                # patch_features = x.reshape(-1, x.shape[1])
-                # patch_features = x_norm[:, 1 : self.model.backbone.num_register_tokens + 1]
-                # Extract depth if requested
+                # print("PATCHES", patch_features.shape)
                 if self.enable_depth:
-                    # x = self.model.backbone.head(raw_backbone_features["x_norm_clstoken"])
-                    # print(x.shape)
-                    # processed_features = self.model.backbone(None)
-                    # print(len(processed_features))
-                    # print(len(processed_features[0]))
-                    # print(processed_features[0].shape)
-                    # print(dir(self.model))
-                    # if self.model.neck:
-                    #     x = self.model.neck(x)
                     out = self.model._decode_head_forward_test(raw_backbone_features, None)
                     # crop the pred depth to the certain range.
                     depth_map = torch.clamp(out, 
                                                      min=self.model.decode_head.min_depth, 
                                                      max=self.model.decode_head.max_depth)
-                    # processed_features = self.model.extract_feat(image_tensor)
-                    # depth_map = self.model._decode_head_forward_test(processed_features, None)
                     # Crop depth map back to original image size
                     depth_output = crop_depth_to_original_size(depth_map, padding_info, image.size, self.image_size)
                 else:
                     depth_output = None
+                
+                # Extract segmentation if requested
+                if self.enable_segmentation and self.segmentation_head is not None:
+                    seg_output = self.segmentation_head(raw_backbone_features)
+                    # Take argmax to get class predictions
+                    seg_output = torch.argmax(seg_output, dim=1, keepdim=True)
+                    # Crop segmentation map back to original image size (reuse depth function with nearest interpolation)
+                    segmentation_output = crop_depth_to_original_size(seg_output.float(), padding_info, image.size, self.image_size, mode='nearest')
+                else:
+                    segmentation_output = None
                     
             else:
                 # Base DINOv2 model - use standard approach
@@ -262,6 +401,7 @@ class DINOv2PatchExtractor:
                     
                 # Base models don't support depth
                 depth_output = None
+                segmentation_output = None
         
         # Remove batch dimension from features
         patch_features = patch_features.squeeze(0)  # Shape: (n_patches, feature_dim)
@@ -343,18 +483,19 @@ def aggregate_depth_to_patches(depth_map: np.ndarray, patch_coords: np.ndarray, 
     return np.array(patch_depths)
 
 
-def crop_depth_to_original_size(depth_map: torch.Tensor, padding_info: dict, original_size: tuple[int, int], input_size: int = 518) -> np.ndarray:
+def crop_depth_to_original_size(depth_map: torch.Tensor, padding_info: dict, original_size: tuple[int, int], input_size: int = 518, mode: str = 'bilinear') -> np.ndarray:
     """
-    Crop depth map back to original image size, removing padding and resizing.
+    Crop tensor output back to original image size, removing padding and resizing.
     
     Args:
-        depth_map: Depth map tensor from model (1, 1, H, W) or (1, H, W)
+        depth_map: Output tensor from model (1, 1, H, W) or (1, H, W)
         padding_info: Padding information from smart_resize_with_padding
         original_size: (width, height) of original image
         input_size: Size of the padded input image (default 518)
+        mode: Interpolation mode ('bilinear' for depth, 'nearest' for segmentation)
         
     Returns:
-        Depth map as numpy array with shape (original_height, original_width)
+        Output as numpy array with shape (original_height, original_width)
     """
     # Ensure depth map is 4D for interpolation: (1, 1, H, W)
     if depth_map.dim() == 3:
@@ -362,12 +503,12 @@ def crop_depth_to_original_size(depth_map: torch.Tensor, padding_info: dict, ori
     if depth_map.dim() == 2:
         depth_map = depth_map.unsqueeze(0).unsqueeze(0)  # Add batch and channel dimensions
     
-    # First, resize depth map to match the padded input size
+    # First, resize tensor to match the padded input size
     upsampled_depth = F.interpolate(
         depth_map, 
         size=(input_size, input_size), 
-        mode='bilinear', 
-        align_corners=False
+        mode=mode, 
+        align_corners=False if mode == 'bilinear' else None
     )
     
     # Remove batch and channel dimensions for cropping: (H, W)
@@ -391,8 +532,8 @@ def crop_depth_to_original_size(depth_map: torch.Tensor, padding_info: dict, ori
     resized_depth = F.interpolate(
         cropped_depth, 
         size=(original_height, original_width), 
-        mode='bilinear', 
-        align_corners=False
+        mode=mode, 
+        align_corners=False if mode == 'bilinear' else None
     )
     
     # Remove batch and channel dimensions, convert to numpy

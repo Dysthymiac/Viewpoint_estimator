@@ -22,6 +22,10 @@ class BoundingBox:
     def crop_image(self, image: Image.Image) -> Image.Image:
         """Crop image using bounding box coordinates."""
         return image.crop((self.x1, self.y1, self.x2, self.y2))
+    
+    def area(self) -> float:
+        """Calculate bounding box area."""
+        return (self.x2 - self.x1) * (self.y2 - self.y1)
 
 
 @dataclass(frozen=True)

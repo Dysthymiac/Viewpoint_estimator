@@ -21,6 +21,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from src.utils.config import load_config
 from src.data.cvat_loader import CVATLoader
 from src.data.coco_loader import COCOLoader
+from src.data.folder_loader import FolderLoader
 from src.models.dinov2_extractor import DINOv2PatchExtractor
 from src.utils.analysis_utils import load_analysis_model
 
@@ -63,7 +64,7 @@ class ClusterLabeler:
         """Load configuration, dataset, and analysis model."""
         try:
             # Load config
-            self.config = load_config(Path("config_zebra_test.yaml"))
+            self.config = load_config(Path("config_beluga_test.yaml"))
             
             # Load dataset
             dataset_root = Path(self.config['dataset']['root_path'])
@@ -84,9 +85,14 @@ class ClusterLabeler:
             if dataset_format.lower() == 'coco':
                 annotations_file = dataset_config['annotations_file']
                 coco_json_path = dataset_root / annotations_file
-                self.loader = COCOLoader(image_root, coco_json_path, crop_to_bbox=crop_to_bbox)
+                self.loader = COCOLoader(coco_json_path, image_root, crop_to_bbox=crop_to_bbox)
             elif dataset_format.lower() == 'cvat':
                 self.loader = CVATLoader(dataset_root, crop_to_bbox=crop_to_bbox)
+            elif dataset_format.lower() == 'folder':
+                image_extensions = dataset_config.get('image_extensions', None)
+                self.loader = FolderLoader(image_root, crop_to_bbox=crop_to_bbox, image_extensions=image_extensions)
+            else:
+                raise ValueError(f"Unsupported dataset format: {dataset_format}. Supported formats: 'cvat', 'coco', 'folder'")
             self.annotations = self.loader.annotations.copy()
 
             # Initialize extractor
@@ -117,7 +123,7 @@ class ClusterLabeler:
         
         # Load and process image
         image = self.loader.load_image(annotation)
-        patch_features, patch_coordinates, relative_patch_size = self.extractor.extract_patch_features(image)
+        patch_features, patch_coordinates, relative_patch_size, _ = self.extractor.extract_patch_features(image)
         
         # Transform with analysis method
         raw_output = self.analysis_method.transform(patch_features)
@@ -704,6 +710,6 @@ if __name__ == "__main__":
     app.launch(
         server_name="127.0.0.1",
         server_port=7860,
-        share=False,
+        share=True,
         show_error=True
     )

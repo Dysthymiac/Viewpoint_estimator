@@ -159,7 +159,6 @@ def extract_body_part_centroids(patch_components: np.ndarray,
             mask = create_mask_from_patches(patch_coordinates, cluster_mask, relative_patch_size)
             mask = apply_morphology(mask, operations, kernel_size, kernel_shape)
             cluster_mask = apply_mask_to_patches(mask, patch_coordinates, cluster_mask, relative_patch_size)
-
         centroid = calculate_weighted_centroid(patch_coordinates, cluster_mask)
         if centroid is not None:
             body_parts[part_name] = {
@@ -274,7 +273,7 @@ def estimate_axes_from_patch_groups(
     morphology: bool = True,
     operations: List[str] = ["opening", "closing"],
     kernel_size: int = 1,
-    kernel_shape: str = "disk"
+    kernel_shape: str = "square"
 ) -> Dict[str, Optional[np.ndarray]]:
     """
     Estimate 3D axes by fitting lines to grouped body part patches.
@@ -292,8 +291,8 @@ def estimate_axes_from_patch_groups(
         Dict with 3D axes {x, y, z} and quality metrics
     """
     # Define robust axis groupings - body included in both for stability
-    longitudinal_parts = ['head', 'body', 'tail']
-    dorsal_ventral_parts = ['legs', 'body', 'back']  # body included for robustness
+    longitudinal_parts = ['head', 'neck', 'body', 'tail', 'thighs']
+    dorsal_ventral_parts = ['legs', 'belly', 'body', 'back']  # body included for robustness
     body_parts = extract_body_part_centroids(patch_components, 
                                              patch_coordinates, 
                                              relative_patch_size,
@@ -315,8 +314,9 @@ def estimate_axes_from_patch_groups(
         body_parts, patch_coordinates, patch_depths,
         dorsal_ventral_parts, image_size
     )
-    
-    if x_axis_fit is None or z_axis_fit is None:
+    if z_axis_fit is None:
+        z_axis_fit = {'direction': np.array([0,1,0]), 'quality': 0}
+    if x_axis_fit is None:
         return {'x': None, 'y': None, 'z': None, 'x_quality': 0, 'z_quality': 0}, body_parts
     
     # Get axis directions from fitting
@@ -344,7 +344,8 @@ def estimate_axes_from_patch_groups(
         z_direction_from_centroids = find_direction_from_body_parts('legs', 'body', body_parts, image_size)
     if z_direction_from_centroids is None:
         z_direction_from_centroids = find_direction_from_body_parts('body', 'back', body_parts, image_size)
-        
+    if z_direction_from_centroids is None:
+        z_direction_from_centroids = np.array([0,1,0])
     # Check Z-axis direction using dot product
     if z_direction_from_centroids is not None:
         if np.dot(z_axis[:2], z_direction_from_centroids[:2]) < 0:
@@ -446,3 +447,115 @@ def estimate_viewpoint_with_axis_fitting(
         'part_coverage': part_coverage,
         'method': 'axis_fitting'
     }
+
+
+def estimate_viewpoint_with_filtered_patches(
+    patch_components: np.ndarray,
+    patch_coordinates: np.ndarray,
+    patch_depths: np.ndarray,
+    relative_patch_size: float,
+    cluster_labels: Dict[str, List[int]],
+    image_size: Tuple[int, int],
+    patch_indices: np.ndarray,
+    forward_threshold: float = 45,
+    side_threshold: float = 75,
+    depth_mult: float = 50,
+    morphology: bool = True,
+    operations: List[str] = ["opening", "closing"],
+    kernel_size: int = 1,
+    kernel_shape: str = "square"
+) -> Dict:
+    """
+    Estimate viewpoint using only specified patch indices from a detection.
+    
+    Args:
+        patch_components: Cluster membership matrix (n_patches, n_clusters)
+        patch_coordinates: Patch center coordinates (n_patches, 2) in relative space [0,1]
+        patch_depths: Depth values for each patch (n_patches,)
+        relative_patch_size: Size of patches relative to image
+        cluster_labels: Dict mapping body part names to cluster ID lists
+        image_size: (width, height) tuple
+        patch_indices: Array of patch indices to use for this detection
+        forward_threshold: Threshold for forward/backward classification
+        side_threshold: Threshold for left/right classification
+        depth_mult: Multiplier for depth values
+        morphology: Whether to apply morphological operations
+        operations: List of morphological operations to apply
+        kernel_size: Size of morphological kernel
+        kernel_shape: Shape of morphological kernel
+        
+    Returns:
+        Dict with viewpoint estimation results for this detection
+    """
+    # Filter all inputs to only include the specified patch indices
+    filtered_patch_components = patch_components[patch_indices]
+    filtered_patch_coordinates = patch_coordinates[patch_indices]
+    filtered_patch_depths = patch_depths[patch_indices] * depth_mult
+    
+    # Call the original function with filtered data
+    return estimate_viewpoint_with_axis_fitting(
+        filtered_patch_components,
+        filtered_patch_coordinates, 
+        filtered_patch_depths,
+        relative_patch_size,
+        cluster_labels,
+        image_size,
+        forward_threshold,
+        side_threshold,
+        depth_mult=1.0,  # Already applied above
+        morphology=morphology,
+        operations=operations,
+        kernel_size=kernel_size,
+        kernel_shape=kernel_shape
+    )
+
+
+def estimate_viewpoint_for_detections(
+    detections: List[Dict],
+    patch_components: np.ndarray,
+    patch_coordinates: np.ndarray,
+    patch_depths: np.ndarray,
+    relative_patch_size: float,
+    cluster_labels: Dict[str, List[int]],
+    image_size: Tuple[int, int],
+    **viewpoint_kwargs
+) -> List[Dict]:
+    """
+    Apply viewpoint estimation to each detection using its filtered patches.
+    
+    Args:
+        detections: List of detection dictionaries from detect_animals_with_sam2()
+        patch_components: Cluster membership matrix (n_patches, n_clusters)
+        patch_coordinates: Patch center coordinates (n_patches, 2) in relative space [0,1]
+        patch_depths: Depth values for each patch (n_patches,)
+        relative_patch_size: Size of patches relative to image
+        cluster_labels: Dict mapping body part names to cluster ID lists
+        image_size: (width, height) tuple
+        **viewpoint_kwargs: Additional arguments for viewpoint estimation
+        
+    Returns:
+        List of detection dictionaries enriched with viewpoint information
+    """
+    enriched_detections = []
+    
+    for detection_info in detections:
+        patch_indices = detection_info['patch_indices']
+        
+        # Estimate viewpoint for this detection's patches
+        viewpoint_result = estimate_viewpoint_with_filtered_patches(
+            patch_components=patch_components,
+            patch_coordinates=patch_coordinates,
+            patch_depths=patch_depths,
+            relative_patch_size=relative_patch_size,
+            cluster_labels=cluster_labels,
+            image_size=image_size,
+            patch_indices=patch_indices,
+            **viewpoint_kwargs
+        )
+        
+        # Add viewpoint information to detection
+        enriched_detection = detection_info.copy()
+        enriched_detection['viewpoint'] = viewpoint_result
+        enriched_detections.append(enriched_detection)
+    
+    return enriched_detections

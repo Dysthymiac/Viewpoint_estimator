@@ -20,6 +20,7 @@ os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 from src.analysis import PipelineMethod
 from src.data.cvat_loader import CVATLoader
 from src.data.coco_loader import COCOLoader
+from src.data.folder_loader import FolderLoader
 from src.models.dinov2_extractor import DINOv2PatchExtractor
 from src.utils.analysis_utils import (
     create_analysis_method_from_config,
@@ -138,7 +139,7 @@ def process_features_chunked(loader: CVATLoader, extractor: DINOv2PatchExtractor
             
             for annotation in tqdm(chunk_annotations, desc=f"Chunk {chunk_idx + 1}/{total_chunks}", leave=False):
                 image = loader.load_image(annotation)
-                patch_features, coordinates, _ = extractor.extract_patch_features(image)
+                patch_features, coordinates, _, _ = extractor.extract_patch_features(image)
                 chunk_features_list.append(patch_features)
                 chunk_coordinates.append(coordinates)
                 chunk_labels.append(annotation.viewpoint)
@@ -287,7 +288,7 @@ def create_data_loader(config: dict):
     if dataset_format.lower() == 'coco':
         annotations_file = dataset_config['annotations_file']
         coco_json_path = dataset_root / annotations_file
-        loader = COCOLoader(image_root, coco_json_path, crop_to_bbox=crop_to_bbox)
+        loader = COCOLoader(coco_json_path, image_root, crop_to_bbox=crop_to_bbox)
         logging.info(f"Loaded COCO dataset: {len(loader)} annotations")
         logging.info(f"Annotations from: {coco_json_path}")
         logging.info(f"Images from: {image_root}")
@@ -295,8 +296,15 @@ def create_data_loader(config: dict):
         loader = CVATLoader(dataset_root, crop_to_bbox=crop_to_bbox)
         logging.info(f"Loaded CVAT dataset: {len(loader)} annotations")
         logging.info(f"Dataset root: {dataset_root}")
+    elif dataset_format.lower() == 'folder':
+        image_extensions = dataset_config.get('image_extensions', None)
+        loader = FolderLoader(image_root, crop_to_bbox=crop_to_bbox, image_extensions=image_extensions)
+        logging.info(f"Loaded Folder dataset: {len(loader)} images")
+        logging.info(f"Images from: {image_root}")
+        if image_extensions:
+            logging.info(f"Image extensions: {image_extensions}")
     else:
-        raise ValueError(f"Unsupported dataset format: {dataset_format}. Supported formats: 'cvat', 'coco'")
+        raise ValueError(f"Unsupported dataset format: {dataset_format}. Supported formats: 'cvat', 'coco', 'folder'")
     
     logging.info(f"Unique viewpoints: {sorted(loader.viewpoints)}")
     logging.info(f"Using {'cropped' if crop_to_bbox else 'full'} images")

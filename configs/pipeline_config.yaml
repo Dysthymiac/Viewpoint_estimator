@@ -1,0 +1,52 @@
+# Animal Detection Pipeline Configuration
+# This file contains all configurable parameters for the detection and viewpoint estimation pipeline
+
+detection:
+  # SAM2 Detection Parameters
+  score_threshold: 0.7                    # Minimum score for SAM2 masks
+  merge_overlap_threshold: 0.5            # Overlap threshold for mask merging
+  kernel_size: 1                          # Morphological kernel size for patch cleaning
+  body_part_labels:                       # Body parts used for centroid detection
+    - "body"
+    - "head"
+    - "neck"
+    - "back"
+    - "belly"
+  background_labels:                      # Background labels for filtering
+    - "background"
+    - "vegetation"
+    - "ground"
+    - "shadow"
+  background_threshold: 0.6               # Maximum background ratio in masks
+  image_resize: 1024                      # Optional image resize for SAM2 (null = no resize)
+  plot_debug: false                       # Whether to show debug plots
+
+viewpoint:
+  # 3D Viewpoint Estimation Parameters
+  forward_threshold: 45.0                 # Angular threshold for front/back classification (degrees)
+  side_threshold: 75.0                    # Angular threshold for left/right classification (degrees)
+  depth_mult: 50.0                        # Multiplier for depth values
+  morphology: true                        # Apply morphological operations to body parts
+  operations:                             # Morphological operations to apply
+    - "opening"
+    - "closing"
+  kernel_size: 1                          # Morphological kernel size
+  kernel_shape: "square"                  # Kernel shape for morphological operations
+
+bounding_box:
+  # Bounding Box Extraction Parameters
+  body_parts:                             # Body parts to include in bounding box
+    - "body"
+    - "back"
+    - "belly"
+    - "thighs"
+  padding: 0.0                            # Additional padding around bounding box (relative)
+  apply_morphology: true                  # Apply morphological cleaning to patches
+  kernel_size: 1                          # Morphological kernel size
+
+visualization:
+  # Visualization Parameters  
+  show_patches: true                      # Show individual patches in detection visualization
+  figsize_detections: [15, 10]            # Figure size for detection visualization
+  figsize_viewpoints: [20, 15]            # Figure size for viewpoint visualization
+  image_resize: 1024                      # Optional image resize for viewpoint visualization

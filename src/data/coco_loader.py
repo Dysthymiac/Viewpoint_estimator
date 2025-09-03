@@ -18,7 +18,7 @@ from .cvat_loader import BoundingBox
 class COCOImage:
     """COCO image metadata."""
     uuid: str
-    file_name: str
+    image_path: str
     width: int
     height: int
     latitude: float
@@ -29,14 +29,16 @@ class COCOImage:
 @dataclass(frozen=True)
 class COCOAnnotation:
     """Single COCO annotation with viewpoint label."""
-    annot_uuid: str
+    uuid: str
     image_uuid: str
     bbox: BoundingBox
+    individual_id: str
     viewpoint: str
-    category: str
     category_id: int
-    manual: bool
-    census_annot: bool
+    annot_census: bool
+    annot_census_region: bool = False
+    annot_manual: bool = False
+    category: str = ""
     
     @property
     def image_id(self) -> str:
@@ -48,15 +50,29 @@ class COCOAnnotation:
 class COCOCategory:
     """COCO category information."""
     id: int
-    name: str
+    species: str
 
 
 class COCOLoader:
     """Loads COCO format annotations and provides image access."""
     
-    def __init__(self, dataset_root: Path, coco_json_path: Path, crop_to_bbox: bool = True) -> None:
-        self.dataset_root = Path(dataset_root)
-        self.coco_json_path = Path(coco_json_path)
+    def __init__(self, coco_json_path: Path, dataset_root: Path | None = None, crop_to_bbox: bool = True, images_dir: Path | None = None) -> None:
+        self.dataset_root = Path(dataset_root) if dataset_root is not None else None
+        
+        # Handle absolute vs relative coco_json_path
+        coco_path = Path(coco_json_path)
+        if coco_path.is_absolute():
+            self.coco_json_path = coco_path
+        else:
+            self.coco_json_path = self.dataset_root / coco_path if self.dataset_root else coco_path
+        if images_dir is not None:
+            images_dir = Path(images_dir)
+            if images_dir.is_absolute():
+                self.images_dir = images_dir
+            else:
+                self.images_dir = self.dataset_root / images_dir
+        else:
+            self.images_dir = self.dataset_root
         self.crop_to_bbox = crop_to_bbox
         self._annotations: list[COCOAnnotation] = []
         self._images: dict[str, COCOImage] = {}
@@ -72,7 +88,7 @@ class COCOLoader:
         for cat_data in coco_data['categories']:
             category = COCOCategory(
                 id=cat_data['id'],
-                name=cat_data['name']
+                species=cat_data.get('species', cat_data.get('name', ''))
             )
             self._categories[category.id] = category
         
@@ -80,7 +96,7 @@ class COCOLoader:
         for img_data in coco_data['images']:
             image = COCOImage(
                 uuid=img_data['uuid'],
-                file_name=img_data['file_name'],
+                image_path=img_data['image_path'],
                 width=img_data['width'],
                 height=img_data['height'],
                 latitude=img_data['latitude'],
@@ -91,27 +107,34 @@ class COCOLoader:
         
         # Load annotations
         for ann_data in coco_data['annotations']:
-            bbox = BoundingBox(
-                x1=float(ann_data['bbox x']),
-                y1=float(ann_data['bbox y']),
-                x2=float(ann_data['bbox x']) + float(ann_data['bbox w']),
-                y2=float(ann_data['bbox y']) + float(ann_data['bbox h'])
-            )
+            # Handle different bbox formats
+            if 'bbox' in ann_data:
+                # Original format: [x_min, y_min, x_max, y_max]
+                bbox = BoundingBox(*ann_data['bbox'])
+            elif all(k in ann_data for k in ['bbox_x', 'bbox_y', 'bbox_w', 'bbox_h']):
+                # GZCD format: bbox_x, bbox_y, bbox_w, bbox_h
+                x, y, w, h = ann_data['bbox_x'], ann_data['bbox_y'], ann_data['bbox_w'], ann_data['bbox_h']
+                bbox = BoundingBox(x, y, x + w, y + h)
+            else:
+                # Default empty bbox
+                bbox = BoundingBox(0, 0, 0, 0)
             
             # Ensure viewpoint is always a string
-            viewpoint = ann_data['annot viewpoint']
+            viewpoint = ann_data.get('viewpoint', 'unknown')
             if not isinstance(viewpoint, str):
                 viewpoint = "unknown"
             
             annotation = COCOAnnotation(
-                annot_uuid=ann_data['annot uuid'],
-                image_uuid=ann_data['image uuid'],
+                uuid=ann_data['uuid'],
+                image_uuid=ann_data['image_uuid'],
                 bbox=bbox,
                 viewpoint=viewpoint,
-                category=ann_data['category'],
+                individual_id=ann_data.get('individual_id', ann_data.get('name_uuid', '')),
                 category_id=ann_data['category_id'],
-                manual=ann_data['annot manual'],
-                census_annot=ann_data['census annot']
+                annot_census=ann_data.get('annot_census', False),
+                annot_census_region=ann_data.get('annot_census_region', False),
+                annot_manual=ann_data.get('annot_manual', False),
+                category=ann_data.get('category', '')
             )
             
             self._annotations.append(annotation)
@@ -136,20 +159,37 @@ class COCOLoader:
         """Get unique viewpoint labels."""
         return {ann.viewpoint for ann in self._annotations}
 
-    def get_image_path(self, annotation: COCOAnnotation) -> Path:
+    def get_image_path(self, image:COCOImage) -> Path:
+        image_path = Path(image.image_path)
+        
+        # If image path is absolute, use as is
+        if image_path.is_absolute():
+            return image_path
+        else:
+            # If relative and we have dataset_root, concatenate with root
+            if self.images_dir:
+                return self.images_dir / image_path
+            else:
+                return image_path
+
+    def get_image_path_from_annotation(self, annotation: COCOAnnotation) -> Path:
         """Get full path to image file."""
-        image = self._images[annotation.image_uuid]
-        return self.dataset_root / image.file_name
+        return self.get_image_path(self._images[annotation.image_uuid])
+        
+
+    def get_image_path_from_uuid(self, image_uuid: str) -> Path:
+        """Get full path to image file from image UUID."""
+        return self.get_image_path(self._images[image_uuid])
 
     def load_cropped_image(self, annotation: COCOAnnotation) -> Image.Image:
         """Load and crop image according to annotation."""
-        image_path = self.get_image_path(annotation)
+        image_path = self.get_image_path_from_annotation(annotation)
         image = Image.open(image_path).convert('RGB')
         return annotation.bbox.crop_image(image)
     
     def load_full_image(self, annotation: COCOAnnotation) -> Image.Image:
         """Load full image without cropping."""
-        image_path = self.get_image_path(annotation)
+        image_path = self.get_image_path_from_annotation(annotation)
         return Image.open(image_path).convert('RGB')
     
     def load_image(self, annotation: COCOAnnotation) -> Image.Image:
@@ -163,13 +203,17 @@ class COCOLoader:
         """Filter annotations by category names."""
         return [ann for ann in self._annotations if ann.category in category_names]
 
+    def filter_by_category_id(self, category_ids: list[int]) -> list[COCOAnnotation]:
+        """Filter annotations by category IDs."""
+        return [ann for ann in self._annotations if ann.category_id in category_ids]
+
     def filter_by_viewpoint(self, viewpoints: list[str]) -> list[COCOAnnotation]:
         """Filter annotations by viewpoint labels."""
         return [ann for ann in self._annotations if ann.viewpoint in viewpoints]
 
     def filter_manual_annotations(self) -> list[COCOAnnotation]:
         """Get only manually annotated items."""
-        return [ann for ann in self._annotations if ann.manual]
+        return [ann for ann in self._annotations if ann.annot_census]
 
     def iter_images(self) -> Iterator[tuple[COCOAnnotation, Image.Image]]:
         """Iterate over annotations with images."""
