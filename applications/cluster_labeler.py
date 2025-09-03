@@ -454,12 +454,12 @@ def create_interface():
                 # Third view selection
                 with gr.Row():
                     third_view_type = gr.Radio(
-                        choices=["Probabilities", "Uncertainty", "Labeled Clusters"], 
+                        choices=["Labeled Clusters"], 
                         label="Additional View", 
-                        value="Probabilities"
+                        value="Labeled Clusters"
                     )
                 
-                third_view_image = gr.Image(label="Probabilities/Uncertainty/Labeled", type="pil")
+                third_view_image = gr.Image(label="Labeled", type="pil")
                 
                 # ALL visualization parameters exposed
                 with gr.Accordion("Visualization Parameters", open=False):
@@ -476,17 +476,17 @@ def create_interface():
                             smooth = gr.Checkbox(label="Smooth Rendering", value=False)
                         
                         # Uncertainty parameters tab
-                        with gr.TabItem("Uncertainty"):
-                            uncertainty_method = gr.Dropdown(
-                                choices=["entropy", "max_ratio", "variance"],
-                                label="Uncertainty Method",
-                                value="entropy"
-                            )
-                            uncertainty_colormap = gr.Dropdown(
-                                choices=["viridis", "plasma", "inferno", "magma", "cividis", "turbo"],
-                                label="Uncertainty Colormap",
-                                value="viridis"
-                            )
+                        # with gr.TabItem("Uncertainty"):
+                        #     uncertainty_method = gr.Dropdown(
+                        #         choices=["entropy", "max_ratio", "variance"],
+                        #         label="Uncertainty Method",
+                        #         value="entropy"
+                        #     )
+                        #     uncertainty_colormap = gr.Dropdown(
+                        #         choices=["viridis", "plasma", "inferno", "magma", "cividis", "turbo"],
+                        #         label="Uncertainty Colormap",
+                        #         value="viridis"
+                        #     )
                         
                         # Component selection tab
                         with gr.TabItem("Components"):
@@ -536,7 +536,8 @@ def create_interface():
                     gr.update(visible=True),  # Show main interface
                     gr.update(choices=cluster_choices),  # Update cluster checkboxes
                     gr.update(maximum=len(labeler.annotations)-1),  # Update image slider
-                    gr.update(choices=component_choices)  # Update component selection
+                    gr.update(choices=component_choices),  # Update component selection
+                    gr.update(choices=labeler.semantic_labels)
                 )
             else:
                 return status, gr.update(visible=False), gr.update(), gr.update(), gr.update()
@@ -559,7 +560,7 @@ def create_interface():
         
         def update_third_view(
             image_idx, third_view_type, normalization, temperature, alpha, smooth,
-            uncertainty_method, uncertainty_colormap, component_names,
+            component_names,
             morphological_cleanup, morph_operations, morph_kernel_size, morph_kernel_shape
         ):
             """Update probabilities, uncertainty, or labeled clusters view."""
@@ -568,20 +569,7 @@ def create_interface():
             if component_names:
                 component_indices = [int(name.split()[-1]) for name in component_names]
             
-            if third_view_type == "Probabilities":
-                return labeler.create_probabilities_view(
-                    int(image_idx), normalization, temperature, alpha, smooth,
-                    component_indices, morphological_cleanup, morph_operations,
-                    morph_kernel_size, morph_kernel_shape
-                )
-            elif third_view_type == "Uncertainty":
-                return labeler.create_uncertainty_view(
-                    int(image_idx), uncertainty_method, uncertainty_colormap, alpha, smooth,
-                    component_indices, normalization, temperature, morphological_cleanup,
-                    morph_operations, morph_kernel_size, morph_kernel_shape
-                )
-            else:  # Labeled Clusters
-                return labeler.create_labeled_clusters_view(
+            return labeler.create_labeled_clusters_view(
                     int(image_idx), alpha, smooth, morphological_cleanup,
                     morph_operations, morph_kernel_size, morph_kernel_shape
                 )
@@ -647,7 +635,7 @@ def create_interface():
         # Load data
         load_btn.click(
             load_data_handler,
-            outputs=[status_text, main_interface, cluster_checkboxes, image_slider, component_selection]
+            outputs=[status_text, main_interface, cluster_checkboxes, image_slider, component_selection, semantic_dropdown]
         )
         
         # Original image - only updates when image index changes
@@ -667,12 +655,12 @@ def create_interface():
         
         # Third view - updates when relevant params change
         for component in [image_slider, third_view_type, normalization, temperature, alpha, smooth,
-                         uncertainty_method, uncertainty_colormap, component_selection,
+                         component_selection,
                          morphological_cleanup, morph_operations, morph_kernel_size, morph_kernel_shape]:
             component.change(
                 update_third_view,
                 inputs=[image_slider, third_view_type, normalization, temperature, alpha, smooth,
-                       uncertainty_method, uncertainty_colormap, component_selection,
+                       component_selection,
                        morphological_cleanup, morph_operations, morph_kernel_size, morph_kernel_shape],
                 outputs=[third_view_image]
             )
