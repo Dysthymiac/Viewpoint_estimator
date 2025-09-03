@@ -14,6 +14,9 @@ from PIL import Image
 
 from src.utils.analysis_utils import load_analysis_model
 
+import yaml
+import json
+from pathlib import Path
 from ..models.dinov2_extractor import DINOv2PatchExtractor, aggregate_depth_to_patches
 from ..detection.animal_detector import detect_animals_with_sam2, get_detection_body_part_boxes
 from ..classification.viewpoint_3d import estimate_viewpoint_for_detections
@@ -181,9 +184,6 @@ def create_pipeline_from_config_file(
     Returns:
         Configured AnimalDetectionPipeline instance
     """
-    import yaml
-    import json
-    from pathlib import Path
     
     config_path = Path(config_path)
     
@@ -221,9 +221,6 @@ def create_pipeline_from_main_config(main_config_path: str) -> AnimalDetectionPi
     Returns:
         Configured AnimalDetectionPipeline instance with all components
     """
-    import yaml
-    import json
-    from pathlib import Path
     
     # Load main config
     main_config_path = Path(main_config_path)
@@ -267,12 +264,16 @@ def create_pipeline_from_main_config(main_config_path: str) -> AnimalDetectionPi
     # Load analysis method (this would need to be loaded from saved model)
     analysis_config = main_config.get('analysis', {})
     model_path = Path(analysis_config['output_dir']) / analysis_config['model_filename']
+    if not Path(model_path).is_absolute():
+        model_path = main_config_path.parent / model_path
+    
     analysis_method = load_analysis_model(model_path)
     
     # Extract cluster labels from cluster_labeling config
     cluster_labeling_config = main_config.get('cluster_labeling', {})
     labels_file = Path(cluster_labeling_config.get("labels_file", "./cluster_labels.json"))
-
+    if not Path(labels_file).is_absolute():
+        labels_file = main_config_path.parent / labels_file
     with open(labels_file, 'r') as f:
         cluster_labels = json.load(f)
         print(f"Cluster labels loaded from {labels_file}")

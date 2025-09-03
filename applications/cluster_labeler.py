@@ -64,7 +64,7 @@ class ClusterLabeler:
         """Load configuration, dataset, and analysis model."""
         try:
             # Load config
-            self.config = load_config(Path("config_beluga_test.yaml"))
+            self.config = load_config(Path("config.yaml"))
             
             cluster_config = self.config.get("cluster_labeling", {})
             if "semantic_labels" in cluster_config:

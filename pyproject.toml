@@ -23,7 +23,7 @@ dependencies = [
     "pip>=25.2",
     "setuptools==65.6.3",
     "ftfy>=6.3.1",
-    "huggingface-hub>=0.34.4",
+    "huggingface-hub[hf-xet]>=0.34.4",
     "sam-2[dev,notebooks]",
     "opencv-python>=4.11.0.86",
 ]

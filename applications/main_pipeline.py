@@ -315,7 +315,7 @@ def create_data_loader(config: dict):
 def main() -> None:
     """Main execution pipeline."""
     # Load configuration
-    config = load_config(Path("config_zebra_test.yaml"))
+    config = load_config(Path("config.yaml"))
     setup_directories(config)
     setup_logging(config)
     
