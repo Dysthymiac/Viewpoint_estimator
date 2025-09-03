@@ -66,6 +66,10 @@ class ClusterLabeler:
             # Load config
             self.config = load_config(Path("config_beluga_test.yaml"))
             
+            cluster_config = self.config.get("cluster_labeling", {})
+            if "semantic_labels" in cluster_config:
+                self.semantic_labels = cluster_config["semantic_labels"]
+            self.export_path = Path(cluster_config.get("labels_file", "cluster_labels.json"))
             # Load dataset
             dataset_root = Path(self.config['dataset']['root_path'])
             crop_to_bbox = self.config['dataset'].get('crop_to_bbox', False)
@@ -334,11 +338,11 @@ class ClusterLabeler:
         if not self.cluster_labels:
             return "No labels to export"
         
-        export_path = Path("cluster_labels.json")
-        with open(export_path, 'w') as f:
+        
+        with open(self.export_path, 'w') as f:
             json.dump(self.cluster_labels, f, indent=2)
         
-        return f"✅ Labels exported to {export_path}"
+        return f"✅ Labels exported to {self.export_path}"
     
     def load_labels(self, file_path: str) -> str:
         """Load cluster labels from JSON file."""
