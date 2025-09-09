@@ -258,7 +258,8 @@ def create_pipeline_from_main_config(main_config_path: str) -> AnimalDetectionPi
     # Initialize SAM2 predictor
     sam_config = main_config.get('sam', {})
     sam2_predictor = SAM2ImagePredictor.from_pretrained(
-        sam_config.get('model', 'facebook/sam2.1-hiera-base-plus')
+        sam_config.get('model', 'facebook/sam2.1-hiera-base-plus'),
+        device=model_config['device']
     )
     
     # Load analysis method (this would need to be loaded from saved model)
