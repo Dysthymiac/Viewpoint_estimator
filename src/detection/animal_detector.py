@@ -1300,10 +1300,10 @@ def detect_animals_with_sam2(
     if image_resize is not None:
         original_width, original_height = image.size
         if original_width >= original_height:
-            new_width = image_resize
+            new_width = min(original_width, image_resize)
             new_height = int(original_height * image_resize / original_width)
         else: 
-            new_height = image_resize
+            new_height = min(original_height, image_resize)
             new_width = int(original_width * image_resize / original_height)
         
         image = image.resize((new_width, new_height), Image.LANCZOS)
