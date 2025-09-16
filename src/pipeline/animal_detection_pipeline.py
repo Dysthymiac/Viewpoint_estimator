@@ -129,8 +129,14 @@ class AnimalDetectionPipeline:
             **self.config.detection
         )
         
+        image_info = {"patch_components": patch_components,
+                    "patch_coordinates": patch_coordinates,
+                    "patch_depths": patch_depths,
+                    "cluster_labels": self.cluster_labels,
+                    "relative_patch_size": self.depth_extractor.relative_patch_size}
+        
         if len(detections) == 0:
-            return detections
+            return detections, image_info
         
         # Step 2: Add viewpoint estimation
         detections = estimate_viewpoint_for_detections(
@@ -155,11 +161,6 @@ class AnimalDetectionPipeline:
             **self.config.bounding_box
         )
         
-        image_info = {"patch_components": patch_components,
-                    "patch_coordinates": patch_coordinates,
-                    "patch_depths": patch_depths,
-                    "cluster_labels": self.cluster_labels,
-                    "relative_patch_size": self.depth_extractor.relative_patch_size}
 
         return detections, image_info
 
